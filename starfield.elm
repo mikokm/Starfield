@@ -6,13 +6,44 @@ import Random exposing (..)
 import Window
 import Debug
 
+velocity : Float
+velocity = 1.01
 
-type alias Star = (Float, Float)
+starCount : Int
+starCount = 100
 
-type alias Stars = List Star
+type alias Bounds =
+    { minX : Float
+    , minY : Float
+    , maxX : Float
+    , maxY : Float
+    }
+
+bounds: Bounds
+bounds =
+    { minX = 0.3
+    , minY = 0.3
+    , maxX = 0.5
+    , maxY = 0.5
+    }
+
+type alias Star = 
+    { x: Float
+    , y: Float
+    }
+
+
+type alias Stars =
+    { stars : List Star
+    , seed : Seed
+    }
+
 
 stars : Stars
-stars = (generateStars 1.0 1.0)
+stars =
+    { stars = []
+    , seed = (initialSeed 1337)
+    }
 
 
 background : Float -> Float -> Form
@@ -20,41 +51,60 @@ background w h =
     filled black (rect w h)
 
 
-starToForm : (Float, Float) -> (Float, Float) -> Form
-starToForm (w, h) (x, y) =
-    move (w*x, h*y) (filled white (square 3))
+starToForm : (Float, Float) -> Star -> Form
+starToForm (w, h) star =
+    move (w * star.x, h * star.y) (filled white (square 3))
 
 
-moveStar : Float -> Star -> Star
-moveStar d star =
+tupleToStar : (Float, Float) -> Star
+tupleToStar (x, y) =
+    { x = x, y = y }
+
+
+addStars : List Star -> Seed -> (List Star, Seed) 
+addStars stars seed =
+    if (starCount - List.length stars) == 0 then
+        (stars, seed)
+    else
+        let
+            (star, newSeed) = (generateStar bounds.minX bounds.minY seed)
+        in
+            addStars (star :: stars) newSeed
+
+
+moveStar : Star -> Star
+moveStar star =
+    { star |
+        x = star.x * velocity,
+        y = star.y * velocity
+    }
+
+
+filterInside : Star -> Bool
+filterInside star =
+    abs star.x < bounds.maxX && abs star.y < bounds.maxX
+
+
+generateStar : Float -> Float -> Seed -> (Star, Seed)
+generateStar width height seed =
     let
-        (x, y) = star
-        seed = floor d
+        pair = Random.pair (Random.float -width width) (Random.float -height height)
+        (coords, newSeed) = Random.generate pair seed
     in
-        if abs x > 1.0 || abs y > 1.0 then
-            fst (Random.generate (generatePair 1.0 1.0) (Random.initialSeed seed))
-        else
-            (x * 1.01, y * 1.01)
-
-
-generatePair : Float -> Float -> Random.Generator (Float, Float)
-generatePair width height =
-    Random.pair (Random.float -width width) (Random.float -height height)
-
-
-generateList : Float -> Float -> (List (Float, Float), Seed)
-generateList w h =
-    Random.generate (Random.list 200 (generatePair w h)) (Random.initialSeed 1)
-
-
-generateStars : Float -> Float -> List Star
-generateStars w h = 
-    (fst (generateList w h))
-
+        (tupleToStar coords, newSeed)
+        
 
 update : Float -> Stars -> Stars
 update time stars =
-    List.map (moveStar time) stars --(Debug.log "stars" stars)
+    let
+        movedStars = List.map moveStar stars.stars
+        insideField = List.filter filterInside movedStars
+        (updatedStars, updatedSeed) = addStars insideField stars.seed
+    in
+        { stars |
+            stars = updatedStars,
+            seed = updatedSeed
+        }
 
 
 view : Stars -> (Int, Int) -> Element
@@ -62,7 +112,7 @@ view stars (w, h) =
     let
         w' = toFloat w
         h' = toFloat h
-        forms = List.map (starToForm (w', h')) stars
+        forms = List.map (starToForm (w', h')) stars.stars
     in
         collage w h ([(background w' h')] ++ forms)
 
@@ -70,4 +120,4 @@ view stars (w, h) =
 main : Signal Element
 main = 
     -- view (update 0 stars) (500, 500)
-    Signal.map2 view (Signal.foldp update stars (Signal.foldp (+) 0 (fps 60))) Window.dimensions
+    Signal.map2 view (Signal.foldp update stars (fps 60)) Window.dimensions
