@@ -1,11 +1,45 @@
+
+import Html exposing (Html, Attribute, div, text, input)
+import Html.App exposing (program)
 import Color exposing (..)
-import Graphics.Collage exposing (..)
-import Graphics.Element exposing (..)
+import Collage exposing (..)
+import Element exposing (..)
 import Time exposing (..)
+import AnimationFrame
 import Random exposing (..)
 import Window
-import Debug
+import Task
 
+main : Program Never
+main =
+    program
+        { init = initModelAndCommands
+        , update = update
+        , subscriptions = subscriptions
+        , view = view
+        }
+
+-------- Init -------------------------
+initModelAndCommands : ( Model, Cmd Msg )
+initModelAndCommands =
+    ( defaultModel, getWindowSizeCommand )
+
+
+-------- Commands -------------------------
+getWindowSizeCommand : Cmd Msg
+getWindowSizeCommand =
+    Task.perform (always NoOp) WindowSize Window.size
+
+
+-------- Subscriptions -------------------------
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.batch
+        [ AnimationFrame.diffs Tick
+        , Window.resizes WindowSize
+        ]
+
+-------- Model -------------------------
 velocity : Float
 velocity = 1.01
 
@@ -27,41 +61,67 @@ bounds =
     , maxY = 0.5
     }
 
-type alias Star = 
+type alias Star =
     { x: Float
     , y: Float
     }
 
 
-type alias Stars =
+type alias Model =
     { stars : List Star
     , seed : Seed
+    , windowDimensions : Window.Size
     }
 
 
-stars : Stars
-stars =
+defaultModel : Model
+defaultModel =
     { stars = []
     , seed = (initialSeed 1337)
+    , windowDimensions = { width = 640, height = 480 }
     }
 
 
-background : Float -> Float -> Form
-background w h =
-    filled black (rect w h)
+-------- Messages -------------------------
+type Msg
+    = NoOp
+    | WindowSize Window.Size
+    | Tick Time.Time
 
 
-starToForm : (Float, Float) -> Star -> Form
-starToForm (w, h) star =
-    move (w * star.x, h * star.y) (filled white (square 3))
 
+-------- Update -------------------------
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    let
+        ( newModel, cmds ) =
+            case msg of
+                NoOp ->
+                    ( model, Cmd.none )
+
+                WindowSize newSize ->
+                    ( { model | windowDimensions = newSize }, Cmd.none )
+
+                Tick dt ->
+                    let
+                        movedStars = List.map moveStar model.stars
+                        insideField = List.filter filterInside movedStars
+                        (updatedStars, updatedSeed) = addStars insideField model.seed
+                        model' =  { model |
+                                stars = updatedStars,
+                                seed = updatedSeed
+                            }
+                    in
+                        (model', Cmd.none)
+    in
+        ( newModel, cmds )
 
 tupleToStar : (Float, Float) -> Star
 tupleToStar (x, y) =
     { x = x, y = y }
 
 
-addStars : List Star -> Seed -> (List Star, Seed) 
+addStars : List Star -> Seed -> (List Star, Seed)
 addStars stars seed =
     if (starCount - List.length stars) == 0 then
         (stars, seed)
@@ -89,35 +149,29 @@ generateStar : Float -> Float -> Seed -> (Star, Seed)
 generateStar width height seed =
     let
         pair = Random.pair (Random.float -width width) (Random.float -height height)
-        (coords, newSeed) = Random.generate pair seed
+        (coords, newSeed) = Random.step pair seed
     in
         (tupleToStar coords, newSeed)
-        
 
-update : Float -> Stars -> Stars
-update time stars =
+
+-------- View -------------------------
+view : Model -> Html Msg
+view model =
     let
-        movedStars = List.map moveStar stars.stars
-        insideField = List.filter filterInside movedStars
-        (updatedStars, updatedSeed) = addStars insideField stars.seed
+        { width, height } = model.windowDimensions
+        width' = toFloat width
+        height' = toFloat height
+        forms = List.map (starToForm (width', height')) model.stars
     in
-        { stars |
-            stars = updatedStars,
-            seed = updatedSeed
-        }
+        collage width height ([(background width' height')] ++ forms)
+        |> Element.toHtml
+
+background : Float -> Float -> Form
+background width height =
+    filled black (rect width height)
 
 
-view : Stars -> (Int, Int) -> Element
-view stars (w, h) =
-    let
-        w' = toFloat w
-        h' = toFloat h
-        forms = List.map (starToForm (w', h')) stars.stars
-    in
-        collage w h ([(background w' h')] ++ forms)
+starToForm : (Float, Float) -> Star -> Form
+starToForm (width, height) star =
+    move (width * star.x, height * star.y) (filled white (square 3))
 
-
-main : Signal Element
-main = 
-    -- view (update 0 stars) (500, 500)
-    Signal.map2 view (Signal.foldp update stars (fps 60)) Window.dimensions
